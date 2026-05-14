@@ -1,9 +1,31 @@
 # eda_utils.py
 
+import os
+from typing import List
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from google.adk.agents import Agent
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai import types as genai_types
+
+
+## Setup secret keys
+
+try:
+    GOOGLE_API_KEY = UserSecretsClient().get_secret("GOOGLE_API_KEY")
+    os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
+    print("✅ Gemini API key setup complete.")
+except Exception as e:
+    print(f"🔑 Authentication Error: Please make sure you have added 'GOOGLE_API_KEY' to your Kaggle secrets. Details: {e}")
+
+
+# -----------------------------
+# Core EDA utilities
+# -----------------------------
 
 def load_data(path_or_file):
     """
@@ -20,6 +42,9 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     - Coerce numeric columns
     - Drop obviously invalid rows based on ID fields
     """
+    if df is None or df.empty:
+        return df
+
     df = df.copy()
 
     # Parse likely date columns if present
@@ -28,13 +53,17 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
             try:
                 df[col] = pd.to_datetime(df[col], errors="coerce")
             except Exception:
+                # Soft-fail on date parsing
                 pass
 
     # Coerce obvious numeric columns
     numeric_keywords = ["price", "amount", "revenue", "sales", "qty", "quantity", "discount", "profit"]
     for col in df.columns:
         if any(key in col.lower() for key in numeric_keywords):
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            try:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+            except Exception:
+                pass
 
     # Drop rows with missing core identifiers if present
     core_id_cols = [
@@ -50,34 +79,40 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
 def get_overview_stats(df: pd.DataFrame) -> dict:
     """
     Return basic overview information for the dataframe.
-    Useful if you want to show in Streamlit without recomputing.
     """
+    if df is None or df.empty:
+        return {"shape": (0, 0), "dtypes": {}, "describe_numeric": pd.DataFrame()}
+
     overview = {
         "shape": df.shape,
         "dtypes": df.dtypes.astype(str).to_dict(),
-        "describe_numeric": df.describe(include="number").T,
+        "describe_numeric": df.describe(include="number").T if not df.select_dtypes("number").empty else pd.DataFrame(),
     }
     return overview
 
 
-def get_numeric_columns(df: pd.DataFrame):
+def get_numeric_columns(df: pd.DataFrame) -> List[str]:
     """
     Return list of numeric columns.
     """
+    if df is None or df.empty:
+        return []
     return df.select_dtypes(include="number").columns.tolist()
 
 
-def get_categorical_columns(df: pd.DataFrame):
+def get_categorical_columns(df: pd.DataFrame) -> List[str]:
     """
     Return list of non-numeric (categorical/text) columns.
     """
+    if df is None or df.empty:
+        return []
     return df.select_dtypes(exclude="number").columns.tolist()
 
 
 def plot_numeric_distribution(df: pd.DataFrame, col: str):
     """
     Create a histogram and boxplot for a numeric column.
-    Returns a matplotlib Figure (for Streamlit's st.pyplot).
+    Returns a matplotlib Figure.
     """
     data = df[col].dropna()
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
@@ -109,8 +144,15 @@ def plot_categorical_distribution(df: pd.DataFrame, col: str, top_n: int = 20):
 def summarize_dataframe(df: pd.DataFrame, max_cols: int = 10) -> str:
     """
     Create a compact textual summary of up to max_cols columns.
-    This will be used later as input to an LLM.
+    This will be used as input/context for the LLM.
+
+    - Handles missing values
+    - Distinguishes numeric vs non-numeric columns
+    - Limits categorical detail to top 3 categories
     """
+    if df is None or df.empty:
+        return "Empty dataframe: no rows to summarize."
+
     lines = []
     cols = df.columns[:max_cols]
     n_rows = len(df)
@@ -123,15 +165,19 @@ def summarize_dataframe(df: pd.DataFrame, max_cols: int = 10) -> str:
 
         if pd.api.types.is_numeric_dtype(series):
             desc = series.describe()
+            col_min = desc.get("min", None)
+            col_max = desc.get("max", None)
+            col_mean = desc.get("mean", None)
+
             line = (
                 f"Column: {col} (numeric, dtype={dtype}) | "
                 f"non_null={non_null}, missing_pct={missing_pct:.1f}% | "
-                f"min={desc.get('min', None)}, max={desc.get('max', None)}, "
-                f"mean={desc.get('mean', None)}"
+                f"min={col_min}, max={col_max}, mean={col_mean}"
             )
         else:
             vc = series.astype(str).value_counts(normalize=True).head(3)
             top_vals = [f"{idx}({pct*100:.1f}%)" for idx, pct in vc.items()]
+
             line = (
                 f"Column: {col} (non-numeric, dtype={dtype}) | "
                 f"non_null={non_null}, missing_pct={missing_pct:.1f}% | "
@@ -144,33 +190,92 @@ def summarize_dataframe(df: pd.DataFrame, max_cols: int = 10) -> str:
     return summary
 
 
-def plot_numeric_distribution(df: pd.DataFrame, col: str):
+# -----------------------------
+# LLM (Google ADK + Gemini) for EDA insights
+# -----------------------------
+
+# Simple, concise prompt with exactly 4 items per section
+EDA_INSIGHTS_INSTRUCTION = """
+You are a senior data analyst for an ecommerce company.
+You see only a compact summary of a dataframe (no raw rows).
+
+Given the dataframe summary, do ALL of the following:
+
+1. Data understanding
+   - Briefly describe what this dataset likely represents and name 2–3 key metrics.
+
+2. Key patterns (exactly 4 bullet points)
+   - List 4 notable patterns you can infer from ranges, means, and category frequencies.
+
+3. Data quality issues (exactly 4 bullet points)
+   - List 4 potential issues (missingness, outliers, imbalance, strange values).
+
+4. Recommended EDA steps (exactly 4 bullet points)
+   - Suggest 4 concrete plots or analyses to run next.
+
+5. Business questions (exactly 4 bullet points)
+   - Propose 4 business questions this dataset could help answer.
+
+Respond in clear markdown with headings and bullet lists only.
+""".strip()
+
+
+# Pre-create a simple ADK agent for EDA insights
+_session_service = InMemorySessionService()
+_eda_agent = Agent(
+    model="gemini-2.5-flash",
+    name="eda_insights_agent",
+    instruction=EDA_INSIGHTS_INSTRUCTION,
+    description="Generates EDA insights from a compact dataframe summary.",
+)
+_eda_runner = Runner(
+    agent=_eda_agent,
+    app_name="ecommerce_eda_app",
+    session_service=_session_service,
+)
+
+
+async def _call_eda_agent_async(summary_text: str) -> str:
     """
-    Create a histogram and boxplot for a numeric column.
-    Returns a matplotlib Figure.
+    Internal async helper to call the ADK agent with the summary text.
     """
-    data = df[col].dropna()
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    user_content = genai_types.Content(
+        role="user",
+        parts=[genai_types.Part(text=summary_text)],
+    )
 
-    sns.histplot(data, kde=True, ax=axes[0])
-    axes[0].set_title(f"Histogram of {col}")
+    last_text = ""
+    async for event in _eda_runner.run_async(
+        user_id="eda_user",
+        session_id="eda_session",
+        new_message=user_content,
+    ):
+        if event.is_final_response() and event.content and event.content.parts:
+            # Take the last text part as the final markdown
+            last_text = event.content.parts[0].text or ""
 
-    sns.boxplot(x=data, ax=axes[1])
-    axes[1].set_title(f"Boxplot of {col}")
-
-    plt.tight_layout()
-    return fig
+    return last_text or "No insights generated by the EDA agent."
 
 
-def plot_categorical_distribution(df: pd.DataFrame, col: str, top_n: int = 20):
+def generate_eda_insights(summary_text: str) -> str:
     """
-    Create a bar chart of the top N categories for a categorical column.
-    Returns a matplotlib Figure.
+    Synchronous wrapper for Streamlit:
+    - Validates env / summary
+    - Calls the ADK agent via asyncio
+    - Handles errors and returns a safe string
     """
-    vc = df[col].astype(str).value_counts().head(top_n)
-    fig, ax = plt.subplots(figsize=(8, 4))
-    sns.barplot(x=vc.index, y=vc.values, ax=ax)
-    ax.set_title(f"Top {top_n} categories for {col}")
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
-    plt.tight_layout()
-    return fig
+    if not summary_text or summary_text.strip() == "":
+        return "No summary text provided. Generate a summary before requesting insights."
+
+    if not os.getenv("GOOGLE_API_KEY"):
+        return (
+            "GOOGLE_API_KEY is not set. Please configure it in your environment "
+            "before generating EDA insights."
+        )
+
+    try:
+        import asyncio
+
+        return asyncio.run(_call_eda_agent_async(summary_text))
+    except Exception as e:
+        return f"Error while generating EDA insights with Gemini/ADK: {e}"
