@@ -142,3 +142,35 @@ def summarize_dataframe(df: pd.DataFrame, max_cols: int = 10) -> str:
 
     summary = f"Rows: {n_rows}\n" + "\n".join(lines)
     return summary
+
+
+def plot_numeric_distribution(df: pd.DataFrame, col: str):
+    """
+    Create a histogram and boxplot for a numeric column.
+    Returns a matplotlib Figure.
+    """
+    data = df[col].dropna()
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    sns.histplot(data, kde=True, ax=axes[0])
+    axes[0].set_title(f"Histogram of {col}")
+
+    sns.boxplot(x=data, ax=axes[1])
+    axes[1].set_title(f"Boxplot of {col}")
+
+    plt.tight_layout()
+    return fig
+
+
+def plot_categorical_distribution(df: pd.DataFrame, col: str, top_n: int = 20):
+    """
+    Create a bar chart of the top N categories for a categorical column.
+    Returns a matplotlib Figure.
+    """
+    vc = df[col].astype(str).value_counts().head(top_n)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    sns.barplot(x=vc.index, y=vc.values, ax=ax)
+    ax.set_title(f"Top {top_n} categories for {col}")
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
+    plt.tight_layout()
+    return fig
