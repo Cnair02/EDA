@@ -17,7 +17,7 @@ from eda_utils import (
 
 
 st.set_page_config(page_title="Ecommerce EDA + AI Insights", layout="wide")
-st.title("Ecommerce EDA Dashboard with AI Insights (Gemini/ADK)")
+st.title("EDA Dashboard with AI Insights (Gemini)")
 
 
 # -----------------------------
@@ -217,7 +217,7 @@ with tabs[2]:
 
 # === AI EDA Insights Tab ===
 with tabs[3]:
-    st.subheader("AI EDA Insights (Gemini / ADK)")
+    st.subheader("AI EDA Insights (Gemini)")
 
     if len(df.columns) == 0:
         st.warning("No columns available; cannot generate AI insights.")
@@ -236,7 +236,7 @@ with tabs[3]:
         st.text(summary_text)
 
         if st.button("Generate AI EDA insights"):
-            with st.spinner("Calling Gemini via ADK for EDA insights..."):
+            with st.spinner("Calling Gemini for EDA insights..."):
                 insights_md = generate_eda_insights(summary_text)
             st.markdown("**LLM-generated EDA insights:**")
             st.markdown(insights_md)
