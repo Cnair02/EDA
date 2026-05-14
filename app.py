@@ -216,7 +216,7 @@ with tabs[2]:
 
 
 # === AI EDA Insights Tab ===
-with tabs[4]:
+with tabs[3]:
     st.subheader("AI EDA Insights (Gemini / ADK)")
 
     if len(df.columns) == 0:
