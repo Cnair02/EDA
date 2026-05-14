@@ -223,7 +223,7 @@ Respond in clear markdown with headings and bullet lists only.
 # Pre-create a simple ADK agent for EDA insights
 _session_service = InMemorySessionService()
 _eda_agent = Agent(
-    model="gemini-2.5-flash",
+    model="gemini-2.5-flash-lite",
     name="eda_insights_agent",
     instruction=EDA_INSIGHTS_INSTRUCTION,
     description="Generates EDA insights from a compact dataframe summary.",
