@@ -186,33 +186,33 @@ with tabs[2]:
         st.info("Need at least one categorical and one numeric column to plot group means.")
 
 
-# === Summary Text Tab ===
-with tabs[3]:
-    st.subheader("Compact data summary (for LLM)")
+# # === Summary Text Tab ===
+# with tabs[3]:
+#     st.subheader("Compact data summary (for LLM)")
 
-    try:
-        max_cols_default = min(8, len(df.columns))
-        max_cols = st.slider(
-            "Max columns to include in summary",
-            min_value=3,
-            max_value=min(15, len(df.columns)),
-            value=max_cols_default,
-        )
+#     try:
+#         max_cols_default = min(8, len(df.columns))
+#         max_cols = st.slider(
+#             "Max columns to include in summary",
+#             min_value=3,
+#             max_value=min(15, len(df.columns)),
+#             value=max_cols_default,
+#         )
 
-        if len(df.columns) == 0:
-            st.warning("No columns available in the dataframe to summarize.")
-        else:
-            summary_text = summarize_dataframe(df, max_cols=max_cols)
+#         if len(df.columns) == 0:
+#             st.warning("No columns available in the dataframe to summarize.")
+#         else:
+#             summary_text = summarize_dataframe(df, max_cols=max_cols)
 
-            st.markdown("**Generated summary:**")
-            st.text(summary_text)
+#             st.markdown("**Generated summary:**")
+#             st.text(summary_text)
 
-            st.caption(
-                "This summary is designed to be passed to a Gemini (Google ADK) agent "
-                "to generate EDA insights."
-            )
-    except Exception as e:
-        st.error(f"Error while generating summary text: {e}")
+#             st.caption(
+#                 "This summary is designed to be passed to a Gemini (Google ADK) agent "
+#                 "to generate EDA insights."
+#             )
+#     except Exception as e:
+#         st.error(f"Error while generating summary text: {e}")
 
 
 # === AI EDA Insights Tab ===
