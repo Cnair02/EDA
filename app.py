@@ -73,7 +73,7 @@ tabs = st.tabs([
     "Overview",
     "Univariate Analysis",
     "Relationships",
-    "Summary Text (for LLM)",
+    # "Summary Text (for LLM)",
     "AI EDA Insights",
 ])
 
