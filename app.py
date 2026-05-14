@@ -1,7 +1,7 @@
 # app.py
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 from eda_utils import (
     load_data,
@@ -11,15 +11,18 @@ from eda_utils import (
     get_categorical_columns,
     plot_numeric_distribution,
     plot_categorical_distribution,
-    summarize_dataframe,  # for later LLM use
+    summarize_dataframe,
+    generate_eda_insights,
 )
 
 
-st.set_page_config(page_title="Ecommerce EDA", layout="wide")
+st.set_page_config(page_title="Ecommerce EDA + AI Insights", layout="wide")
+st.title("Ecommerce EDA Dashboard with AI Insights (Gemini/ADK)")
 
-st.title("Ecommerce EDA Dashboard (MVP)")
 
-
+# -----------------------------
+# Cached loader with cleaning
+# -----------------------------
 @st.cache_data
 def load_and_clean(path_or_file):
     df = load_data(path_or_file)
@@ -27,28 +30,52 @@ def load_and_clean(path_or_file):
     return df
 
 
-# --- Data loading section ---
-
+# -----------------------------
+# Data loading with error handling
+# -----------------------------
 st.sidebar.header("Data")
 
 uploaded_file = st.sidebar.file_uploader("Upload ecommerce CSV", type=["csv"])
 
-if uploaded_file is not None:
-    df = load_and_clean(uploaded_file)
-    st.sidebar.success("Using uploaded file.")
-else:
-    # Fallback to local file
-    default_path = "data/ecommerce.csv"
-    df = load_and_clean(default_path)
-    st.sidebar.info(f"Using default dataset: {default_path}")
+df = None
+error_msg = None
 
-if df is None or df.empty:
-    st.error("No data available. Please upload a valid CSV.")
+try:
+    if uploaded_file is not None:
+        df = load_and_clean(uploaded_file)
+        st.sidebar.success("Using uploaded file.")
+    else:
+        default_path = "data/ecommerce.csv"
+        df = load_and_clean(default_path)
+        st.sidebar.info(f"Using default dataset: {default_path}")
+except FileNotFoundError:
+    error_msg = "Default dataset not found. Please upload a CSV file."
+except pd.errors.EmptyDataError:
+    error_msg = "The uploaded file is empty. Please provide a valid CSV."
+except pd.errors.ParserError:
+    error_msg = "Could not parse the CSV file. Please check the file format."
+except Exception as e:
+    error_msg = f"Unexpected error while loading data: {e}"
+
+if error_msg:
+    st.error(error_msg)
     st.stop()
 
-# --- Tabs ---
+if df is None or df.empty:
+    st.error("No usable data available after loading/cleaning. Please check your CSV.")
+    st.stop()
 
-tabs = st.tabs(["Overview", "Univariate Analysis", "Relationships", "Summary Text (for LLM)"])
+
+# -----------------------------
+# Tabs
+# -----------------------------
+tabs = st.tabs([
+    "Overview",
+    "Univariate Analysis",
+    "Relationships",
+    "Summary Text (for LLM)",
+    "AI EDA Insights",
+])
 
 # === Overview Tab ===
 with tabs[0]:
@@ -66,7 +93,10 @@ with tabs[0]:
 
     with col2:
         st.markdown("**Numeric summary (describe)**")
-        st.dataframe(overview["describe_numeric"])
+        if not overview["describe_numeric"].empty:
+            st.dataframe(overview["describe_numeric"])
+        else:
+            st.info("No numeric columns to summarize.")
 
     st.markdown("**Sample rows**")
     st.dataframe(df.head())
@@ -77,17 +107,24 @@ with tabs[1]:
     st.subheader("Univariate analysis")
 
     all_cols = df.columns.tolist()
-    selected_col = st.selectbox("Select a column", all_cols)
+    if not all_cols:
+        st.warning("No columns available for univariate analysis.")
+    else:
+        selected_col = st.selectbox("Select a column", all_cols)
 
-    if selected_col:
-        if pd.api.types.is_numeric_dtype(df[selected_col]):
-            st.markdown(f"**Numeric distribution for `{selected_col}`**")
-            fig = plot_numeric_distribution(df, selected_col)
-            st.pyplot(fig)
-        else:
-            st.markdown(f"**Categorical distribution for `{selected_col}`**")
-            fig = plot_categorical_distribution(df, selected_col, top_n=20)
-            st.pyplot(fig)
+        if selected_col:
+            try:
+                if pd.api.types.is_numeric_dtype(df[selected_col]):
+                    st.markdown(f"**Numeric distribution for `{selected_col}`**")
+                    fig = plot_numeric_distribution(df, selected_col)
+                    st.pyplot(fig)
+                else:
+                    st.markdown(f"**Categorical distribution for `{selected_col}`**")
+                    top_n = st.slider("Number of top categories to show", 5, 30, 20)
+                    fig = plot_categorical_distribution(df, selected_col, top_n=top_n)
+                    st.pyplot(fig)
+            except Exception as e:
+                st.error(f"Error generating univariate plot: {e}")
 
 
 # === Relationships Tab ===
@@ -97,36 +134,109 @@ with tabs[2]:
     num_cols = get_numeric_columns(df)
     cat_cols = get_categorical_columns(df)
 
-    st.markdown("**Numeric vs numeric (scatter)**")
+    # Numeric vs numeric
+    st.markdown("**Numeric vs numeric (scatter plot)**")
     if len(num_cols) >= 2:
-        x_num = st.selectbox("X-axis (numeric)", num_cols, key="x_num")
-        y_num = st.selectbox("Y-axis (numeric)", num_cols, key="y_num")
+        col1, col2 = st.columns(2)
+        with col1:
+            x_num = st.selectbox("X-axis (numeric)", num_cols, key="x_num_rel")
+        with col2:
+            y_num = st.selectbox("Y-axis (numeric)", num_cols, key="y_num_rel")
+
         if x_num and y_num and x_num != y_num:
-            st.scatter_chart(df[[x_num, y_num]].dropna())
+            try:
+                scatter_df = df[[x_num, y_num]].dropna()
+                if not scatter_df.empty:
+                    st.scatter_chart(scatter_df)
+                else:
+                    st.info("No data available for the selected numeric columns.")
+            except Exception as e:
+                st.error(f"Error generating scatter plot: {e}")
     else:
-        st.info("Not enough numeric columns for scatter plot.")
+        st.info("Not enough numeric columns to create a scatter plot.")
 
     st.markdown("---")
-    st.markdown("**Categorical vs numeric (grouped bar by mean)**")
+
+    # Categorical vs numeric
+    st.markdown("**Categorical vs numeric (mean by category)**")
     if cat_cols and num_cols:
-        cat_col = st.selectbox("Categorical column", cat_cols, key="cat_col")
-        num_col = st.selectbox("Numeric column", num_cols, key="num_col")
+        col3, col4 = st.columns(2)
+        with col3:
+            cat_col = st.selectbox("Categorical column", cat_cols, key="cat_col_rel")
+        with col4:
+            num_col = st.selectbox("Numeric column", num_cols, key="num_col_rel")
+
         if cat_col and num_col:
-            grouped = df[[cat_col, num_col]].dropna().groupby(cat_col)[num_col].mean().reset_index()
-            grouped = grouped.sort_values(num_col, ascending=False)
-            st.bar_chart(grouped.set_index(cat_col))
+            try:
+                grouped = (
+                    df[[cat_col, num_col]]
+                    .dropna()
+                    .groupby(cat_col)[num_col]
+                    .mean()
+                    .reset_index()
+                )
+                grouped = grouped.sort_values(num_col, ascending=False)
+                if not grouped.empty:
+                    st.bar_chart(grouped.set_index(cat_col))
+                else:
+                    st.info("No data available after grouping; try different columns.")
+            except Exception as e:
+                st.error(f"Error generating grouped bar chart: {e}")
     else:
-        st.info("Need at least one categorical and one numeric column.")
+        st.info("Need at least one categorical and one numeric column to plot group means.")
 
 
-# === Summary Text Tab (for LLM later) ===
+# === Summary Text Tab ===
 with tabs[3]:
     st.subheader("Compact data summary (for LLM)")
 
-    max_cols = st.slider("Max columns to include in summary", 3, min(10, len(df.columns)), 8)
-    summary_text = summarize_dataframe(df, max_cols=max_cols)
+    try:
+        max_cols_default = min(8, len(df.columns))
+        max_cols = st.slider(
+            "Max columns to include in summary",
+            min_value=3,
+            max_value=min(15, len(df.columns)),
+            value=max_cols_default,
+        )
 
-    st.markdown("**Generated summary:**")
-    st.text(summary_text)
+        if len(df.columns) == 0:
+            st.warning("No columns available in the dataframe to summarize.")
+        else:
+            summary_text = summarize_dataframe(df, max_cols=max_cols)
 
-    st.info("You will later pass this summary to an LLM to get EDA insights and reports.")
+            st.markdown("**Generated summary:**")
+            st.text(summary_text)
+
+            st.caption(
+                "This summary is designed to be passed to a Gemini (Google ADK) agent "
+                "to generate EDA insights."
+            )
+    except Exception as e:
+        st.error(f"Error while generating summary text: {e}")
+
+
+# === AI EDA Insights Tab ===
+with tabs[4]:
+    st.subheader("AI EDA Insights (Gemini / ADK)")
+
+    if len(df.columns) == 0:
+        st.warning("No columns available; cannot generate AI insights.")
+    else:
+        max_cols_default = min(8, len(df.columns))
+        max_cols = st.slider(
+            "Max columns to include in AI summary",
+            min_value=3,
+            max_value=min(15, len(df.columns)),
+            value=max_cols_default,
+            key="max_cols_ai",
+        )
+        summary_text = summarize_dataframe(df, max_cols=max_cols)
+
+        st.markdown("**Summary sent to the AI agent:**")
+        st.text(summary_text)
+
+        if st.button("Generate AI EDA insights"):
+            with st.spinner("Calling Gemini via ADK for EDA insights..."):
+                insights_md = generate_eda_insights(summary_text)
+            st.markdown("**LLM-generated EDA insights:**")
+            st.markdown(insights_md)
