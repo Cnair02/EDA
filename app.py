@@ -231,10 +231,11 @@ with tabs[3]:
             value=max_cols_default,
             key="max_cols_ai",
         )
-        summary_text = summarize_dataframe(df, max_cols=max_cols)
+        summary_table_ai = get_summary_table(df, max_cols=max_cols)
+        st.markdown("**Summary table used to build AI context:**")
+        st.table(summary_table_ai)
 
-        st.markdown("**Summary sent to the AI agent:**")
-        st.text(summary_text)
+        summary_text = summarize_dataframe(df, max_cols=max_cols)
 
         if st.button("Generate AI EDA insights"):
             with st.spinner("Calling Gemini for EDA insights..."):
