@@ -13,6 +13,7 @@ from eda_utils import (
     plot_categorical_distribution,
     summarize_dataframe,
     generate_eda_insights,
+    get_summary_table, 
 )
 
 
